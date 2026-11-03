@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>3D Model Viewer</title>
+  <style>
+    /* ----- CSS reset & base ----- */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    :root {
+      --header-h: calc(56px + env(safe-area-inset-top, 0px));
+      --accent: #2563eb;
+      --accent-press: #1d4ed8;
+      --text: #0f172a;
+      --muted: #5b6676;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+      /* Native scrolling / zooming disabled so touch gestures drive the 3D viewer */
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      color: var(--text);
+    }
+
+    body {
+      position: fixed;
+      inset: 0;
+      /* Clean neutral viewer background */
+      background: radial-gradient(ellipse at 50% 42%, #f3f5f8 0%, #e3e8ee 55%, #d3dae3 100%);
+      background-color: #e3e8ee;
+    }
+
+    /* ----- FIXED HEADER ----- */
+    .app-header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: var(--header-h);
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-left: calc(16px + env(safe-area-inset-left, 0px));
+      padding-right: calc(16px + env(safe-area-inset-right, 0px));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.92);
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: 0 2px 12px rgba(15, 23, 42, 0.06);
+      backdrop-filter: saturate(180%) blur(12px);
+      -webkit-backdrop-filter: saturate(180%) blur(12px);
+      z-index: 20;
+    }
+
+    .header-text {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .app-title {
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 1.2;
+      letter-spacing: 0.1px;
+      white-space: nowrap;
+    }
+
+    .file-name {
+      font-size: 12px;
+      line-height: 1.3;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+      margin-top: 1px;
+    }
+
+    .file-name:empty {
+      display: none;
+    }
+
+    .add-btn {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 40px;
+      padding: 0 16px 0 12px;
+      border: none;
+      border-radius: 20px;
+      background: var(--accent);
+      color: #ffffff;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+      touch-action: manipulation;
+      transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+    }
+
+    .add-btn svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+    }
+
+    .add-btn:hover {
+      background: var(--accent-press);
+    }
+
+    .add-btn:active {
+      transform: scale(0.96);
+      box-shadow: 0 1px 4px rgba(37, 99, 235, 0.3);
+    }
+
+    .add-btn:focus-visible {
+      outline: 3px solid rgba(37, 99, 235, 0.45);
+      outline-offset: 2px;
+    }
+
+    .add-btn:disabled {
+      background: #9aa5b5;
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+
+    /* ----- VIEWER (everything below the header) ----- */
+    #viewer {
+      position: fixed;
+      top: var(--header-h);
+      left: 0;
+      right: 0;
+      bottom: 0;
+      touch-action: none;
+      overflow: hidden;
+    }
+
+    #viewer canvas {
+      display: block;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      outline: none;
+      cursor: grab;
+    }
+
+    #viewer canvas:active {
+      cursor: grabbing;
+    }
+
+    /* ----- EMPTY-STATE HINT ----- */
+    .hint {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      font-size: 15px;
+      line-height: 1.5;
+      color: var(--muted);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .hint[hidden] {
+      display: none;
+    }
+
+    .hint.is-error {
+      color: #b42318;
+    }
+
+    /* ----- STATUS / ERROR MESSAGE ----- */
+    .toast {
+      position: fixed;
+      top: calc(var(--header-h) + 12px);
+      left: 50%;
+      transform: translate(-50%, -8px);
+      max-width: min(92vw, 480px);
+      padding: 10px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.4;
+      text-align: center;
+      color: #ffffff;
+      background: rgba(15, 23, 42, 0.88);
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.25);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      z-index: 30;
+    }
+
+    .toast.is-visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    .toast.is-error {
+      background: rgba(180, 35, 24, 0.94);
+    }
+
+    #fileInput {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- FIXED HEADER -->
+  <header class="app-header">
+    <div class="header-text">
+      <div class="app-title">3D Model Viewer</div>
+      <div class="file-name" id="fileName"></div>
+    </div>
+    <button class="add-btn" id="addModelBtn" type="button" aria-label="Add Model">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+        <path d="M12 5v14M5 12h14"></path>
+      </svg>
+      <span>Add Model</span>
+    </button>
+  </header>
+
+  <!-- Native file picker (opened by the Add Model button) -->
+  <input type="file" id="fileInput" accept=".glb,model/gltf-binary,application/octet-stream">
+
+  <!-- 3D VIEWER AREA -->
+  <div id="viewer">
+    <div class="hint" id="hint">Tap “Add Model” to open a .glb 3D model from your device.</div>
+  </div>
+
+  <!-- Status / error message -->
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <!-- Three.js and GLTFLoader from CDN -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    // ---------- IMPORTS ----------
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // ---------- CONFIG ----------
+    const MAX_PIXEL_RATIO = 2;                   // mobile-friendly DPR limit
+    const CAMERA_FOV = 40;                       // degrees (vertical)
+    const CAMERA_ELEVATION = 20 * Math.PI / 180; // slight look-down angle
+    const FIT_MARGIN = 1.1;                      // padding around the model
+    // Extreme deep zoom-in: the camera may travel almost to the model centre and
+    // pass freely through any geometry (there is NO collision / push-back system).
+    const MIN_ZOOM = 0.001;                      // closest (relative to fit distance)
+    const MAX_ZOOM = 2.0;                        // farthest (relative to fit distance) – unchanged
+    // Near clipping plane follows the camera distance so it never blocks deep zoom.
+    const NEAR_DISTANCE_RATIO = 0.01;            // near = 1% of the camera distance ...
+    const NEAR_MAX_RATIO = 0.05;                 // ... but never more than 5% of the model radius
+    const NEAR_MIN_RATIO = 1e-5;                 // ... and never less than this fraction of the radius
+
+    // ---------- DOM ----------
+    const viewer = document.getElementById('viewer');
+    const hintEl = document.getElementById('hint');
+    const toastEl = document.getElementById('toast');
+    const fileNameEl = document.getElementById('fileName');
+    const addBtn = document.getElementById('addModelBtn');
+    const fileInput = document.getElementById('fileInput');
+
+    // ---------- STATE ----------
+    let renderer, scene, camera, pivot, canvas, loader;
+    let currentModel = null;   // the model currently shown (only one at a time)
+    let modelRadius = 1;       // bounding-sphere radius around the model centre
+    let fitDistance = 5;       // camera distance at which the whole model fits
+    let zoomCurrent = 1;       // current zoom factor (distance = fitDistance * zoom)
+    let zoomTarget = 1;        // smoothed towards this value
+    let modelReady = false;
+    let loadToken = 0;         // guards against overlapping loads
+    let toastTimer = 0;
+
+    // Rotation inertia (radians / second)
+    const vel = { x: 0, y: 0 };
+    let lastMoveTime = 0;
+
+    // Pointer / gesture state
+    const pointers = new Map();
+    let pinchPrev = 0;
+    let gestureLocked = false; // true after a 2-finger gesture until all fingers lift
+
+    // Animation loop state (render on demand – no constant animation)
+    let rafId = 0;
+    let lastTick = 0;
+
+    // Reusable math objects
+    const AXIS_X = new THREE.Vector3(1, 0, 0);
+    const AXIS_Y = new THREE.Vector3(0, 1, 0);
+    const qTmpX = new THREE.Quaternion();
+    const qTmpY = new THREE.Quaternion();
+
+    // ---------- HELPERS ----------
+    function clamp(v, min, max) {
+      return Math.min(max, Math.max(min, v));
+    }
+
+    function getViewportSize() {
+      const w = Math.max(1, viewer.clientWidth || window.innerWidth);
+      const h = Math.max(1, viewer.clientHeight || window.innerHeight);
+      return { w, h };
+    }
+
+    // ---------- MESSAGES ----------
+    function showMessage(text, type, duration) {
+      clearTimeout(toastTimer);
+      toastEl.textContent = text;
+      toastEl.classList.toggle('is-error', type === 'error');
+      toastEl.classList.add('is-visible');
+      if (duration > 0) {
+        toastTimer = setTimeout(hideMessage, duration);
+      }
+    }
+
+    function hideMessage() {
+      clearTimeout(toastTimer);
+      toastEl.classList.remove('is-visible');
+    }
+
+    function showError(text) {
+      showMessage(text, 'error', 6000);
+    }
+
+    // ---------- 3D SETUP ----------
+    function initThree() {
+      const { w, h } = getViewportSize();
+
+      scene = new THREE.Scene();
+      scene.background = null; // transparent – CSS neutral background shows through
+
+      camera = new THREE.PerspectiveCamera(CAMERA_FOV, w / h, 0.01, 1000);
+
+      try {
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      } catch (err) {
+        console.error('[3D Viewer] WebGL could not be initialised on this device/browser.', err);
+        return false;
+      }
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+      renderer.setSize(w, h, false);
+      renderer.setClearColor(0x000000, 0);
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      renderer.toneMapping = THREE.NoToneMapping;
+      renderer.shadowMap.enabled = false;
+
+      canvas = renderer.domElement;
+      canvas.setAttribute('tabindex', '-1');
+      viewer.appendChild(canvas);
+
+      // Lighting only (no helper meshes): soft sky/ground light + key + fill
+      scene.add(new THREE.HemisphereLight(0xffffff, 0xb9c4cf, 0.75));
+
+      const keyLight = new THREE.DirectionalLight(0xfff4e0, 1.0);
+      keyLight.position.set(2, 4, 5);
+      scene.add(keyLight);
+
+      const fillLight = new THREE.DirectionalLight(0xdfe9ff, 0.4);
+      fillLight.position.set(-4, 1, -2);
+      scene.add(fillLight);
+
+      // Pivot group: the only thing the user rotates. The loaded model lives inside it.
+      pivot = new THREE.Group();
+      scene.add(pivot);
+
+      loader = new GLTFLoader();
+
+      return true;
+    }
+
+    // ---------- MODEL DISPOSAL ----------
+    function disposeObject(root) {
+      root.traverse((obj) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          mats.forEach((m) => {
+            if (!m) return;
+            Object.keys(m).forEach((key) => {
+              const val = m[key];
+              if (val && val.isTexture) val.dispose();
+            });
+            m.dispose();
+          });
+        }
+      });
+    }
+
+    function removeCurrentModel() {
+      if (!currentModel) return;
+      pivot.remove(currentModel);
+      disposeObject(currentModel);
+      currentModel = null;
+      modelReady = false;
+    }
+
+    // ---------- MODEL INSTALL (auto-fit) ----------
+    function installModel(model, displayName) {
+      model.updateMatrixWorld(true);
+
+      // Bounding box -> centre the model on the pivot (geometry is NOT modified)
+      const box = new THREE.Box3().setFromObject(model);
+      if (box.isEmpty()) {
+        throw new Error('The model contains no visible geometry.');
+      }
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.sub(center);
+      model.updateMatrixWorld(true);
+
+      // True bounding-sphere radius around the centre (read-only vertex scan)
+      let maxDistSq = 0;
+      const v = new THREE.Vector3();
+      model.traverse((obj) => {
+        if (obj.isMesh && obj.geometry && obj.geometry.attributes.position) {
+          const pos = obj.geometry.attributes.position;
+          for (let i = 0; i < pos.count; i++) {
+            v.fromBufferAttribute(pos, i).applyMatrix4(obj.matrixWorld);
+            const d = v.lengthSq();
+            if (d > maxDistSq) maxDistSq = d;
+          }
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          mats.forEach((m) => {
+            if (!m) return;
+            // Slightly sharper textures at grazing angles (cheap on mobile)
+            if (m.map) m.map.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+            // Render both sides of every surface so inner walls stay visible
+            // when the camera travels inside a closed model.
+            m.side = THREE.DoubleSide;
+            m.needsUpdate = true;
+          });
+        }
+      });
+      const radius = Math.sqrt(maxDistSq);
+      if (!isFinite(radius) || radius <= 0) {
+        throw new Error('The model has invalid or empty dimensions.');
+      }
+
+      // Everything is valid – now replace the previous model
+      removeCurrentModel();
+      modelRadius = Math.max(radius, 1e-4);
+      pivot.quaternion.identity();       // new model starts with its original rotation
+      zoomCurrent = 1;
+      zoomTarget = 1;
+      vel.x = 0;
+      vel.y = 0;
+
+      pivot.add(model);
+      currentModel = model;
+      modelReady = true;
+
+      hintEl.hidden = true;
+      fileNameEl.textContent = displayName;
+
+      updateCameraFit();
+      applyCamera();
+      requestTick();
+    }
+
+    // ---------- FILE LOADING (local File object, no upload, no hard-coded name) ----------
+    function readFileAsArrayBuffer(file) {
+      if (file.arrayBuffer) return file.arrayBuffer();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('File read error'));
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    function isValidGlb(buffer) {
+      if (!buffer || buffer.byteLength < 20) return false;
+      const dv = new DataView(buffer);
+      const magic = dv.getUint32(0, true);   // 'glTF'
+      const version = dv.getUint32(4, true);
+      return magic === 0x46546C67 && version === 2;
+    }
+
+    async function handleFile(file) {
+      if (!file) return;
+
+      const name = file.name || 'model';
+      const looksLikeGlb = /\.glb$/i.test(name) || file.type === 'model/gltf-binary';
+      if (!looksLikeGlb) {
+        showError('Unsupported file. Please select a .glb 3D model file.');
+        return;
+      }
+
+      const token = ++loadToken;
+      showMessage('Loading model…', 'info', 0);
+
+      let buffer;
+      try {
+        buffer = await readFileAsArrayBuffer(file);
+      } catch (err) {
+        if (token !== loadToken) return;
+        console.error('[3D Viewer] Could not read the selected file.', err);
+        showError('Could not read the selected file. Please try again.');
+        return;
+      }
+      if (token !== loadToken) return;
+
+      if (!isValidGlb(buffer)) {
+        showError('This file is not a valid .glb model.');
+        return;
+      }
+
+      try {
+        loader.parse(
+          buffer,
+          '',
+          (gltf) => {
+            if (token !== loadToken) {
+              disposeObject(gltf.scene);
+              return;
+            }
+            try {
+              installModel(gltf.scene, name);
+              hideMessage();
+            } catch (err) {
+              console.error('[3D Viewer] Model could not be displayed.', err);
+              disposeObject(gltf.scene);
+              showError(err && err.message ? err.message : 'The model could not be displayed.');
+            }
+          },
+          (err) => {
+            if (token !== loadToken) return;
+            console.error('[3D Viewer] Failed to parse the model.', err);
+            showError('This model could not be loaded. The file may be damaged or unsupported.');
+          }
+        );
+      } catch (err) {
+        console.error('[3D Viewer] Failed to parse the model.', err);
+        showError('This model could not be loaded. The file may be damaged or unsupported.');
+      }
+    }
+
+    // ---------- CAMERA ----------
+    function updateCameraFit() {
+      const vHalf = (camera.fov * Math.PI / 180) / 2;
+      const hHalf = Math.atan(Math.tan(vHalf) * camera.aspect);
+      const half = Math.min(vHalf, hHalf);               // limiting axis (portrait / landscape)
+      fitDistance = (modelRadius * FIT_MARGIN) / Math.sin(half);
+
+      // far plane covers the full zoom-out range plus the whole model
+      camera.far = fitDistance * MAX_ZOOM + modelRadius * 20;
+      // near plane is updated every frame in applyCamera() so deep zoom never clips
+      camera.updateProjectionMatrix();
+    }
+
+    function applyCamera() {
+      const dist = fitDistance * zoomCurrent;
+      camera.position.set(0, Math.sin(CAMERA_ELEVATION) * dist, Math.cos(CAMERA_ELEVATION) * dist);
+      camera.lookAt(0, 0, 0);
+
+      // Dynamic near plane: shrinks as the camera gets closer, so the camera can go
+      // right up to (and through) surfaces without being cut off by the near plane.
+      const near = clamp(
+        dist * NEAR_DISTANCE_RATIO,
+        modelRadius * NEAR_MIN_RATIO,
+        modelRadius * NEAR_MAX_RATIO
+      );
+      if (Math.abs(near - camera.near) > camera.near * 0.01) {
+        camera.near = near;
+        camera.updateProjectionMatrix();
+      }
+    }
+
+    function setZoomTarget(value) {
+      zoomTarget = clamp(value, MIN_ZOOM, MAX_ZOOM);
+      requestTick();
+    }
+
+    // ---------- ROTATION ----------
+    function rotationPerPixel() {
+      const { w, h } = getViewportSize();
+      return (Math.PI * 1.2) / Math.min(w, h);
+    }
+
+    function applyRotation(angleY, angleX) {
+      // Free, continuous rotation about world axes (no fixed steps, no pitch lock)
+      qTmpY.setFromAxisAngle(AXIS_Y, angleY);
+      qTmpX.setFromAxisAngle(AXIS_X, angleX);
+      pivot.quaternion.premultiply(qTmpY).premultiply(qTmpX).normalize();
+    }
+
+    function rotateByPixels(dx, dy) {
+      const k = rotationPerPixel();
+      const ay = dx * k;
+      const ax = dy * k;
+      applyRotation(ay, ax);
+
+      const now = performance.now();
+      const dt = Math.max((now - lastMoveTime) / 1000, 0.004);
+      lastMoveTime = now;
+      vel.y = clamp(vel.y + (ay / dt - vel.y) * 0.4, -12, 12);
+      vel.x = clamp(vel.x + (ax / dt - vel.x) * 0.4, -12, 12);
+
+      requestTick();
+    }
+
+    // ---------- RENDER LOOP (on demand) ----------
+    function requestTick() {
+      if (!rafId) rafId = requestAnimationFrame(tick);
+    }
+
+    function tick(now) {
+      rafId = 0;
+      const dt = lastTick ? Math.min((now - lastTick) / 1000, 0.05) : 1 / 60;
+      lastTick = now;
+      let active = false;
+
+      if (modelReady) {
+        // Rotation inertia after the finger is released
+        if (pointers.size === 0 && (Math.abs(vel.x) > 0.02 || Math.abs(vel.y) > 0.02)) {
+          applyRotation(vel.y * dt, vel.x * dt);
+          const damping = Math.exp(-dt * 3.5);
+          vel.x *= damping;
+          vel.y *= damping;
+          active = true;
+        } else if (pointers.size === 0) {
+          vel.x = 0;
+          vel.y = 0;
+        }
+
+        // Smooth zoom
+        const diff = zoomTarget - zoomCurrent;
+        if (Math.abs(diff) > zoomTarget * 0.0005) {
+          zoomCurrent += diff * (1 - Math.exp(-dt * 12));
+          active = true;
+        } else {
+          zoomCurrent = zoomTarget;
+        }
+
+        applyCamera();
+      }
+
+      renderer.render(scene, camera);
+
+      if (active) {
+        requestTick();
+      } else {
+        lastTick = 0;
+      }
+    }
+
+    // ---------- INPUT: TOUCH + MOUSE (Pointer Events) ----------
+    function pinchDistance() {
+      const pts = Array.from(pointers.values());
+      if (pts.length < 2) return 0;
+      return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    }
+
+    function onPointerDown(e) {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      vel.x = 0;
+      vel.y = 0;
+      lastMoveTime = performance.now();
+
+      if (pointers.size >= 2) {
+        gestureLocked = true;          // two-finger gesture = zoom only, never rotate
+        pinchPrev = pinchDistance();
+      }
+      e.preventDefault();
+    }
+
+    function onPointerMove(e) {
+      const p = pointers.get(e.pointerId);
+      if (!p || !modelReady) return;
+
+      const dx = e.clientX - p.x;
+      const dy = e.clientY - p.y;
+      p.x = e.clientX;
+      p.y = e.clientY;
+
+      if (pointers.size === 1 && !gestureLocked) {
+        // One finger / mouse drag -> rotate
+        rotateByPixels(dx, dy);
+      } else if (pointers.size >= 2) {
+        // Two fingers -> pinch zoom only
+        const d = pinchDistance();
+        if (pinchPrev > 0 && d > 0) {
+          // fingers apart -> d grows -> zoom factor shrinks -> camera closer (zoom in)
+          setZoomTarget(zoomTarget * (pinchPrev / d));
+        }
+        pinchPrev = d;
+      }
+      e.preventDefault();
+    }
+
+    function onPointerEnd(e) {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.delete(e.pointerId);
+      try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+
+      if (pointers.size < 2) pinchPrev = 0;
+
+      if (pointers.size === 0) {
+        gestureLocked = false;
+        // Only keep inertia if the finger was still moving when released
+        if (performance.now() - lastMoveTime > 80) {
+          vel.x = 0;
+          vel.y = 0;
+        }
+        requestTick();
+      }
+    }
+
+    function onWheel(e) {
+      e.preventDefault();
+      if (!modelReady) return;
+      let delta = e.deltaY;
+      if (e.deltaMode === 1) delta *= 16;      // lines -> pixels
+      else if (e.deltaMode === 2) delta *= 100; // pages -> pixels
+      // wheel up (negative) -> zoom in, wheel down -> zoom out
+      setZoomTarget(zoomTarget * Math.exp(delta * 0.0015));
+    }
+
+    function bindInput() {
+      canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
+      canvas.addEventListener('pointermove', onPointerMove, { passive: false });
+      canvas.addEventListener('pointerup', onPointerEnd);
+      canvas.addEventListener('pointercancel', onPointerEnd);
+      canvas.addEventListener('lostpointercapture', onPointerEnd);
+      canvas.addEventListener('wheel', onWheel, { passive: false });
+      canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+      // Block native page gestures (iOS Safari pinch-zoom, scrolling, etc.)
+      ['gesturestart', 'gesturechange', 'gestureend'].forEach((name) => {
+        document.addEventListener(name, (e) => e.preventDefault());
+      });
+      document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+
+      // Stop the browser from navigating away if a file is dropped on the page
+      window.addEventListener('dragover', (e) => e.preventDefault());
+      window.addEventListener('drop', (e) => e.preventDefault());
+
+      // WebGL context loss / restore
+      canvas.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        console.error('[3D Viewer] WebGL context lost.');
+        showError('The 3D display was interrupted. Please reload the page.');
+      });
+      canvas.addEventListener('webglcontextrestored', () => requestTick());
+    }
+
+    // ---------- RESIZE ----------
+    function onResize() {
+      if (!renderer || !camera) return;
+      const { w, h } = getViewportSize();
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      if (modelReady) {
+        updateCameraFit();      // keeps the model fully visible in portrait and landscape
+        applyCamera();
+      } else {
+        camera.updateProjectionMatrix();
+      }
+      requestTick();
+    }
+
+    // ---------- ADD MODEL BUTTON / FILE PICKER ----------
+    function bindFilePicker() {
+      addBtn.addEventListener('click', () => {
+        fileInput.click();   // opens the device's native file picker directly
+      });
+
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files && fileInput.files[0];
+        fileInput.value = '';   // allow selecting the same file again later
+        handleFile(file);
+      });
+    }
+
+    // ---------- INIT ----------
+    function init() {
+      if (!initThree()) {
+        hintEl.hidden = false;
+        hintEl.classList.add('is-error');
+        hintEl.textContent = 'WebGL is not available on this device or browser, so 3D models cannot be displayed.';
+        addBtn.disabled = true;
+        return;
+      }
+      bindInput();
+      bindFilePicker();
+      requestTick();
+
+      window.addEventListener('resize', onResize);
+      window.addEventListener('orientationchange', () => setTimeout(onResize, 150));
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', onResize);
+      }
+      if (window.ResizeObserver) {
+        new ResizeObserver(onResize).observe(viewer);
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  </script>
+</body>
+</html>
